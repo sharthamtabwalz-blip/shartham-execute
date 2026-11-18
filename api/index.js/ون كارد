@@ -1,0 +1,166 @@
+// ===== Shartham Execute - Vercel - نسخة طبق الأصل من كود XpoomssxmActivity V14/V15 =====
+// لا تغير أي رقم هنا - هذا هو الكود الذي كان يعمل في التطبيق
+const USR = "onecard";
+const TKN = "7095BBEED9664AD69B067B7458339B00";
+const SECRET = "shartham-secret-2026";
+const LTS = "https://lts-ye.com:8441/API/Tp/V1";
+
+async function callPOST(body){
+  const r = await fetch(LTS,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  return await r.text();
+}
+async function callGET(url){
+  const r = await fetch(url);
+  return await r.text();
+}
+function isRc0(resp){ return resp.toLowerCase().includes('"rc":0'); }
+function isRc0or60(resp){ return isRc0(resp) || resp.toLowerCase().includes('"rc":60'); }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+// جدول سبأفون - نسخة طبق الأصل
+function sabaAmountFromUnits(units){
+  if(units===22.5) return "272.25";
+  if(units===40) return "484.00";
+  if(units===45) return "544.50";
+  if(units===60) return "726.00";
+  if(units===85) return "1028.50";
+  if(units===100) return "1210.00";
+  if(units===125) return "1512.50";
+  if(units===150) return "1815.00";
+  if(units===209) return "2528.90";
+  if(units===300) return "3630.00";
+  if(units===505) return "6110.50";
+  if(units===1270) return "15367.00";
+  return null;
+}
+
+export default async function handler(req, res){
+  if(req.method !== "POST"){ return res.status(200).json({success:false,status:"failed_lts"}); }
+  const data = req.body || {};
+  if(data.secret !== SECRET){ return res.status(200).json({success:false,status:"failed_lts"}); }
+  const action = data.action || "";
+  const raw = String(data.phone || "");
+  const code = String(data.code || data.service || "0");
+  const amtForSendOrig = String(data.amount || "0");
+  try{
+    // ===== 1 - الاستعلام - AC 4006 =====
+    if(action === "query"){
+      const url = LTS + "?ac=4006&sc=42103&sno=" + raw + "&usr=" + USR + "&tkn=" + TKN;
+      const resp = await callGET(url);
+      return res.status(200).json({success:true,status:"completed_lts",resp:resp});
+    }
+
+    // ===== 2 - زر متابعة / شحن مبلغ - btnContinue =====
+    if(action === "charge_amount"){
+      const REF2 = Date.now()%10000000000 + Math.floor(Math.random()*99999);
+      const isForegy = raw.startsWith("1");
+      const isLand = raw.startsWith("0");
+      const isSaba = raw.startsWith("71");
+      let operatorSc = "42101";
+      if(isForegy) operatorSc="42105";
+      else if(isLand) operatorSc="42106";
+      else if(raw.startsWith("70")) operatorSc="42104";
+      else if(raw.startsWith("73")) operatorSc="42102";
+      else operatorSc="42101";
+      let amtToSend = amtForSendOrig;
+      let serviceToSend = "0";
+      // سبأفون وحدات فقط - مثل الكود الأصلي
+      if(isSaba && data.service_type === "وحدات"){
+        const uStr2 = String(data.units || "1");
+        serviceToSend = uStr2;
+        const u = parseFloat(uStr2);
+        const mapped = sabaAmountFromUnits(u);
+        if(mapped !== null) amtToSend = mapped;
+      }
+      let resp=""; let success=false;
+      if(isForegy && serviceToSend !== "0"){
+        resp = await callPOST({ac:7200,sc:42105,item:12,amt:amtToSend,sno:raw,ref:String(REF2),sac:serviceToSend,usr:USR,tkn:TKN});
+        success = isRc0or60(resp);
+      }else{
+        resp = await callPOST({ac:7100,sc:parseInt(operatorSc),amt:amtToSend,sno:raw,mt:1,ref:String(REF2),sac:"0",usr:USR,tkn:TKN});
+        success = isRc0(resp);
+      }
+      return res.status(200).json({success:success,status:success?"completed_lts":"failed_lts",resp:resp});
+    }
+
+    // ===== 3 - شراء باقة - btnBuy =====
+    if(action === "charge_package"){
+      const REF = Date.now()%10000000000 + Math.floor(Math.random()*99999);
+      let amtForSend = amtForSendOrig;
+      // في الكود الأصلي: إذا price فيه نقطة يبقى كما هو وإلا يتحول لـ %.0f
+      // التطبيق بيرسل amount جاهز بنفس الطريقة
+      let resp=""; let success=false; let failedActivation=false;
+      const isYemen = raw.startsWith("77")||raw.startsWith("78");
+      const isYou = raw.startsWith("73");
+      const isW = raw.startsWith("70");
+      const isSaba = raw.startsWith("71");
+      const isForegy = raw.startsWith("1");
+      const isLand = raw.startsWith("0");
+      let isNumeric = true;
+      try{ const v = parseFloat(code); if(isNaN(v)) isNumeric=false; }catch(e){ isNumeric=false; }
+
+      if(isYemen && isNumeric){
+        // AC 7100 - SAC 0
+        resp = await callPOST({AC:7100,SC:42103,AMT:parseFloat(amtForSend),SNO:raw,MT:1,REF:String(REF),SAC:"0",REM:"remarks",USR:USR,TKN:TKN});
+        success = isRc0(resp);
+      }else if(isYemen && !isNumeric){
+        const sacFixed = code.trim().toUpperCase();
+        // 1 - شحن 7100
+        const rC = await callPOST({AC:7100,SC:42103,AMT:parseFloat(amtForSend),SNO:raw,MT:1,REF:String(REF),SAC:"0",REM:"remarks",USR:USR,TKN:TKN});
+        if(!isRc0(rC)){ resp=rC; success=false; failedActivation=false; }
+        else{
+          await sleep(3000);
+          const REF_D = "REF"+(Date.now()%10000000000);
+          const urlA = LTS+"?AC=4002&SC=42103&AMT="+amtForSend+"&SNO="+raw+"&SAC="+sacFixed+"&REF="+REF_D+"&REM=remarks&USR="+USR+"&TKN="+TKN;
+          resp = await callGET(urlA);
+          success = isRc0or60(resp);
+          if(!success){
+            const rB = await callPOST({AC:7200,SC:42103,AMT:parseFloat(amtForSend),SNO:raw,REF:String(REF+2),REM:"remarks",SAC:sacFixed,MT:1,USR:USR,TKN:TKN,item:12});
+            resp=rB; success=isRc0or60(resp);
+            if(!success) failedActivation=true;
+          }
+        }
+      }else{
+        let operatorSc="42101"; let itemB="16"; let amtToSend=amtForSend;
+        if(isW) operatorSc="42104";
+        else if(isYou) operatorSc="42102";
+        else if(isForegy) operatorSc="42105";
+        else if(isLand) operatorSc="42106";
+        else operatorSc="42101";
+        if(isSaba){
+          const units = parseFloat(code);
+          const mapped = sabaAmountFromUnits(units);
+          if(mapped !== null){ amtToSend = mapped; }
+          else{
+            let openAmt = parseFloat(amtForSend);
+            if(openAmt<120) openAmt=120;
+            amtToSend = String(Math.floor(openAmt));
+          }
+        }
+        if(isNumeric){
+          resp = await callPOST({ac:7100,sc:parseInt(operatorSc),amt:amtToSend,sno:raw,mt:1,ref:String(REF),sac:"0",usr:USR,tkn:TKN});
+          success = isRc0(resp);
+        }else{
+          const sacFixed = code.trim();
+          if(isForegy){
+            resp = await callPOST({ac:7200,sc:42105,item:12,amt:amtForSend,sno:raw,ref:String(REF+1),sac:sacFixed,usr:USR,tkn:TKN});
+            success = isRc0or60(resp);
+          }else if(isLand){
+            resp = await callPOST({ac:7100,sc:42106,amt:amtForSend,sno:raw,mt:1,ref:String(REF),sac:"0",usr:USR,tkn:TKN});
+            success = isRc0(resp);
+          }else{
+            if(isYou) operatorSc="42102";
+            if(isW) operatorSc="42104";
+            itemB = isYou ? "10" : "16";
+            resp = await callPOST({ac:7200,sc:parseInt(operatorSc),item:parseInt(itemB),amt:amtForSend,sno:raw,ref:String(REF),sac:sacFixed,usr:USR,tkn:TKN});
+            success = isRc0or60(resp);
+          }
+        }
+      }
+      const finalStatus = success ? "completed_lts" : (failedActivation ? "failed_activation" : "failed_lts");
+      return res.status(200).json({success:success,status:finalStatus,resp:resp});
+    }
+
+    return res.status(200).json({success:false,status:"failed_lts"});
+  }catch(e){ return res.status(200).json({success:false,status:"failed_lts",error:String(e)}); }
+}
